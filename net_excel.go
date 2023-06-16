@@ -11,8 +11,9 @@ const EXCEL_PATH_PREFIX = "Upload/"
 const EXCEL_PATH_POSTFIX = ".xlsx"
 
 type ExcelParseProperties struct {
-	File       string `json:"file"`
-	Sheet      string `json:"sheet"`
+	File       string
+	Sheet      string
+	KeyName    string
 	ListFields []string
 }
 
@@ -31,10 +32,11 @@ var globalExcelDataCache CachedExcelDataPool = make(CachedExcelDataPool)
 var excelDataTypePool ExcelDataTypePool = make(ExcelDataTypePool)
 
 type GetExcelDataRequest struct {
-	File   string `json:"file"`
-	Sheet  string `json:"sheet"`
-	Fields string `json:"fileds"`
-	Key    string `json:"key"`
+	File    string `json:"file"`
+	Sheet   string `json:"sheet"`
+	Fields  string `json:"fields"`
+	KeyName string `json:"keyName"`
+	Key     string `json:"key"`
 }
 
 func excelData2TypeList(parser *ExcelParser, data *ExcelData, newStructType reflect.Type) []interface{} {
@@ -71,12 +73,13 @@ func parseExcelData(properties ExcelParseProperties) ([]interface{}, error) {
 	return items, err
 }
 
-func initExcelData(file string, sheet string, fileds string) *CachedExcelData {
+func initExcelData(file string, sheet string, fileds string, keyName string) *CachedExcelData {
 	cacheKey := file + "_" + stringlize(sheet)
 	val, ok := globalExcelDataCache[cacheKey]
 	properties := ExcelParseProperties{
 		File:       file,
 		Sheet:      sheet,
+		KeyName:    keyName,
 		ListFields: stringToArray(fileds, ","),
 	}
 	if !ok {
@@ -102,11 +105,19 @@ func clearCachedExcelData() {
 }
 
 func getExcelList(w http.ResponseWriter, r *http.Request) {
+	var request GetExcelDataRequest
+	err := json.NewDecoder(r.Body).Decode(&request)
+	if err != nil {
+		httpResponseError(w, err)
+		return
+	}
 
-	file := r.URL.Query().Get("file")
-	sheet := r.URL.Query().Get("sheet")
-	fields := r.URL.Query().Get("fields")
-	data := initExcelData(file, sheet, fields)
+	if len(trimString(request.File)) == 0 || len(trimString(request.Fields)) == 0 {
+		httpResponseFail(w, "Illegal params")
+		return
+	}
+
+	data := initExcelData(request.File, request.Sheet, request.Fields, request.KeyName)
 	list := convertToBriefListType(data, data.ListType)
 
 	if data != nil {
@@ -145,7 +156,7 @@ func getExcelData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := initExcelData(request.File, request.Sheet, request.Fields)
+	data := initExcelData(request.File, request.Sheet, request.Fields, request.KeyName)
 
 	if data != nil {
 		httpResponseObject(w, getItemFromExcelData(data, request.Key))
@@ -157,9 +168,11 @@ func getExcelData(w http.ResponseWriter, r *http.Request) {
 
 func getItemFromExcelData(data *CachedExcelData, key string) interface{} {
 	if data != nil {
+		keyName := data.Properties.KeyName
+
 		for _, item := range data.Items {
 			val := reflect.ValueOf(item)
-			if val.FieldByName(strings.Title(key)).String() == key {
+			if val.FieldByName(strings.Title(keyName)).String() == key {
 				return val.Interface()
 			}
 		}
